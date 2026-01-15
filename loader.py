@@ -1,3 +1,4 @@
+
 from langchain_core.documents import Document
 import os
 from dotenv import load_dotenv
@@ -5,7 +6,6 @@ from langchain_openai import ChatOpenAI, OpenAIEmbeddings
 from typing import List, Optional
 from langchain_community.document_loaders import PyPDFLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-from pathlib import Path
 from langchain_community.vectorstores import Chroma
 import traceback
 
@@ -16,66 +16,67 @@ def set_apikey() -> str:
 
     if not api_key:
         raise ValueError(
-            "OPENAI_API_KEY not found in .env file"
+            "OPENAI_API_KEY not found in .env file. "
             "Please add your key to .env: OPENAI_API_KEY=sk-..."
         )
 
     return api_key
 
-def create_llm( api_key: str, model: str = "gpt-5-nano", temperature: float = 0.6) -> ChatOpenAI:
+def create_llm(api_key: str, model: str = "gpt-4o-mini", temperature: float = 0.6) -> ChatOpenAI:
     """
     Initialize the OpenAI chat model
     """
     llm = ChatOpenAI(
         model=model,
         temperature=temperature,
-        api_key= api_key
+        api_key=api_key
     )
-    print(f"LLM  model {model} of (temp={temperature})")
+    print(f"LLM model {model} of (temp={temperature})")
     return llm
 
 def load_documents(folder: str = "folder") -> List[Document]:
-        """
-        Load all PDFs in the folder and return a list of LangChain Documents.
-        Adds source and page metadata.
-        """
-        if not os.path.exists(folder):
-            print(f"⚠️ Folder not found: {folder}")
-            return []
+    """
+    Load all PDFs in the folder and return a list of LangChain Documents.
+    Adds source and page metadata.
+    """
+    if not os.path.exists(folder):
+        print(f"Folder not found: {folder}")
+        return []
 
-        pdf_files = [f for f in os.listdir(folder) if f.lower().endswith(".pdf")]
-        if not pdf_files:
-            print(f"⚠️ No PDF files found in folder: {folder}")
-            return []
+    pdf_files = [f for f in os.listdir(folder) if f.lower().endswith(".pdf")]
+    if not pdf_files:
+        print(f"No PDF files found in folder: {folder}")
+        return []
 
-        documents = []
+    documents = []
 
-        for pdf_file in pdf_files:
-            full_path = os.path.join(folder, pdf_file)
-            print(f"   Loading: {pdf_file} ... ", end="")
+    for pdf_file in pdf_files:
+        full_path = os.path.join(folder, pdf_file)
+        print(f"   Loading: {pdf_file} ... ", end="")
 
-            try:
-                loader = PyPDFLoader(full_path)
-                docs = loader.load()
-                page_count = len(docs)
-                print(f"Success! ({page_count} pages)")
+        try:
+            loader = PyPDFLoader(full_path)
+            docs = loader.load()
+            page_count = len(docs)
+            print(f"Success! ({page_count} pages)")
 
-                # Add source metadata for each page
-                for i, doc in enumerate(docs):
-                    doc.metadata["source"] = pdf_file
-                    doc.metadata["page"] = i + 1
+            # Add source metadata for each page
+            for i, doc in enumerate(docs):
+                doc.metadata["source"] = pdf_file
+                doc.metadata["source_path"] = full_path
+                doc.metadata["page"] = i + 1
 
-                documents.extend(docs)
-            except Exception as e:
-                print(f"Failed! Error: {str(e)}")
+            documents.extend(docs)
+        except Exception as e:
+            print(f"Failed! Error: {str(e)}")
 
-        total_pages = len(documents)
-        print(f"\n✅ Total pages loaded: {total_pages} across {len(pdf_files)} documents")
+    total_pages = len(documents)
+    print(f"\nTotal pages loaded: {total_pages} across {len(pdf_files)} documents")
 
-        if total_pages == 0:
-            print("⚠️ No content extracted. Make sure PDFs are text-based (not scanned images).")
+    if total_pages == 0:
+        print("No content extracted. Make sure PDFs are text-based (not scanned images).")
 
-        return documents
+    return documents
     
 def create_embeddings(
     api_key: str,
@@ -93,35 +94,58 @@ def create_embeddings(
 
 
 def chunk_documents(docs: List[Document]) -> List[Document]:
-        """
-        Split documents into chunks using RecursiveCharacterTextSplitter.
-        Preserves source metadata for each chunk.
-        """
-        if not docs:
-            print("⚠️ No documents to chunk.")
-            return []
+    """
+    Split documents into chunks using RecursiveCharacterTextSplitter.
+    Preserves source metadata for each chunk.
+    """
+    if not docs:
+        print("No documents to chunk.")
+        return []
 
-        all_chunks = []
-        splitter = RecursiveCharacterTextSplitter(
+    all_chunks = []
+    splitter = RecursiveCharacterTextSplitter(
         chunk_size=400,
         chunk_overlap=50
-        )
-        total_pages = len(docs)
+    )
+    total_pages = len(docs)
 
-        for i, doc in enumerate(docs, 1):
-            source = os.path.basename(doc.metadata.get("source", "unknown"))
-            chunks = splitter.split_documents([doc])
-            chunk_count = len(chunks)
-            print(f"   Document {i}/{total_pages}: {source} → {chunk_count} chunks created")
-            all_chunks.extend(chunks)
+    for i, doc in enumerate(docs, 1):
+        source = os.path.basename(doc.metadata.get("source", "unknown"))
+        source_path = doc.metadata.get("source_path", "")
+        original_page = doc.metadata.get("page", "N/A")
 
-        total_chunks = len(all_chunks)
-        print(f"\n✅ Total chunks created: {total_chunks}")
+        chunks = splitter.split_documents([doc])
+        chunk_count = len(chunks)
+        print(f"Document {i}/{total_pages}: {source} -> {chunk_count} chunks created")
 
-        return all_chunks
+        # Ensure each chunk preserves and enriches metadata
+        for chunk in chunks:
+            # Make a shallow copy to avoid accidental shared-state issues
+            chunk.metadata = dict(chunk.metadata or {})
+            chunk.metadata["source"] = source
+            if source_path:
+                chunk.metadata["source_path"] = source_path
+            chunk.metadata["page"] = original_page
+            
+            # Provide a structured sources list for downstream consumers
+            chunk.metadata["sources"] = [{
+                "file": source,
+                "path": source_path,
+                "page": original_page,
+            }]
+            
+            # Add a short in-document summary (first 300 chars, single-line)
+            summary = chunk.page_content.strip().replace("\n", " ")
+            chunk.metadata["summary"] = summary[:300]
+
+        all_chunks.extend(chunks)
+
+    total_chunks = len(all_chunks)
+    print(f"\nTotal chunks created: {total_chunks}")
+
+    return all_chunks
 
 # VECTOR STORE
-
 
 def create_vectorstore(chunks: List[Document], embeddings: OpenAIEmbeddings, 
         persist_directory: str = "./chroma_db") -> Optional[Chroma]:
@@ -130,6 +154,8 @@ def create_vectorstore(chunks: List[Document], embeddings: OpenAIEmbeddings,
 
     Args:
         chunks: List of document chunks to embed
+        embeddings: OpenAI embeddings instance
+        persist_directory: Directory to save the vector store
 
     Returns:
         Chroma vector store instance
@@ -142,15 +168,14 @@ def create_vectorstore(chunks: List[Document], embeddings: OpenAIEmbeddings,
             persist_directory=persist_directory
         )
 
-        print("\n✅ SUCCESS! Vector database built and saved to",persist_directory)
+        print(f"\nSUCCESS! Vector database built and saved to {persist_directory}")
         print(f"Ready with {total_chunks} searchable chunks from your Tax Reform Bills documents!")
         print("RAG system is now ready for accurate answers from the documents!\n")
 
-            
         return vectorstore
 
     except Exception as e:
-        print("\n❌ Critical error during vector store build:")
+        print("\nCritical error during vector store build:")
         print(f"   {str(e)}")
         traceback.print_exc()
         print("\nSuggested fixes:")
@@ -158,7 +183,7 @@ def create_vectorstore(chunks: List[Document], embeddings: OpenAIEmbeddings,
         print("   • Check that .env has a valid OPENAI_API_KEY")
         print("   • Try with 1-2 small PDFs first")
         print("   • Make sure you have an internet connection (needed for embeddings)")
-        print("   • Try running again — sometimes it’s a temporary connection issue")
+        print("   • Try running again - sometimes it's a temporary connection issue")
     return None
     
 def load_vectorstore(embeddings: OpenAIEmbeddings,
@@ -168,19 +193,16 @@ def load_vectorstore(embeddings: OpenAIEmbeddings,
     Load an existing vector store from disk.
     """
     try:
-            
         print("Loading existing vector store...")
         vectorstore = Chroma(
             persist_directory=persist_directory,
             embedding_function=embeddings
         )
-        print("✅ Vector store loaded!")
-            
-           
+        print("Vector store loaded!")
         return vectorstore
 
     except Exception as e:
-        print("❌ Failed to load vector store:", str(e))
+        print("Failed to load vector store:", str(e))
         traceback.print_exc()
         return None
 
@@ -189,20 +211,20 @@ def sanity_check(vectorstore: Chroma):
     Sanity check to verify vector store retrieval works.
     """
     if not vectorstore:
-        print("⚠️ Sanity check skipped: vector store not initialized.")
+        print("Sanity check skipped: vector store not initialized.")
         return
         
-    print("\n🔎 Running vector store sanity check...")
+    print("\nRunning vector store sanity check...")
 
     test_query = "What is the VAT rate according to the tax reform bill?"
 
     results = vectorstore.similarity_search(test_query, k=2)
 
     if not results:
-        print("⚠️ Sanity check FAILED: No documents retrieved.")
+        print("Sanity check FAILED: No documents retrieved.")
         return
 
-    print(f"✅ Sanity check PASSED: Retrieved {len(results)} documents\n")
+    print(f"Sanity check PASSED: Retrieved {len(results)} documents\n")
 
     for i, doc in enumerate(results, 1):
         source = doc.metadata.get("source", "unknown")
@@ -211,4 +233,4 @@ def sanity_check(vectorstore: Chroma):
         print(f"Result {i}:")
         print(f"   Source: {source}")
         print(f"   Page: {page}")
-        print(f"   Preview: {doc.page_content[:200]}...\n") 
+        print(f"   Preview: {doc.page_content[:200]}...\n")

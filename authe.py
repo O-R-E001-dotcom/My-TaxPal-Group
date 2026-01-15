@@ -15,9 +15,10 @@ bearer = HTTPBearer()
 
 load_dotenv()
 
-SECRET_KEY = os.getenv("SECRET_KEY")
-ALGORITHM = os.getenv("ALGORITHM")
-ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("EXPIRY"))
+# Safe defaults for local development. Override via .env in production.
+SECRET_KEY = os.getenv("SECRET_KEY", "dev_secret_key")
+ALGORITHM = os.getenv("ALGORITHM", "HS256")
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("EXPIRY", "60"))
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
